@@ -121,6 +121,30 @@ def test_karaoke_clause_mode():
                     "{\\ko190}butler, {\\ko0}and {\\ko200}more")
 
 
+def test_last_word_extends_cue():
+    from nospoil.align import CueTiming
+    from nospoil.assgen import extended_end
+    # speech runs past the SRT window: last word ends at 3.4s, cue ends at 3.0s
+    cue = Cue(start=1000, end=3000, lines=[["fast", "talker"]])
+    timing = CueTiming(starts=[1.5, 2.8], mean_prob=0.9, aligned=True, last_end=3.4)
+    assert extended_end(cue, timing, next_start=None) == 3700  # 3400 + 300 pad
+    # but never into the next cue
+    assert extended_end(cue, timing, next_start=3600) == 3550  # 3600 - 50 gap
+    # and never more than 2s beyond the original end
+    timing_far = CueTiming(starts=[1.5, 2.8], mean_prob=0.9, aligned=True, last_end=9.0)
+    assert extended_end(cue, timing_far, next_start=None) == 5000
+    # unaligned cues keep their timing
+    timing_bad = CueTiming(starts=[None, None], mean_prob=0.0, aligned=False, last_end=3.4)
+    assert extended_end(cue, timing_bad, next_start=None) == 3000
+
+
+def test_mapping_tracks_last_end():
+    cues = [Cue(start=0, end=2000, lines=[["hello", "world"]])]
+    words = _words([("hello", 0.5), ("world", 1.8)])
+    (t,) = map_words_to_cues(cues, words)
+    assert t.last_end == 2.0  # end = start + 0.2 in _words
+
+
 def test_build_ass_end_to_end():
     with tempfile.TemporaryDirectory() as d:
         cues, passthrough = load_cues(make_srt(d))

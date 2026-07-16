@@ -54,9 +54,30 @@ def _group_reveals(cue: Cue, reveals_ms: list[int], clause_size: int) -> list[in
     return grouped
 
 
-def karaoke_text(cue: Cue, timing: CueTiming, mode: str = "word", clause_size: int = 4) -> str:
+# Fast dialogue often outlives its SRT window: the cue ends while the last
+# word is still being spoken, which used to push that word's reveal into the
+# final milliseconds (effectively invisible). We extend the cue instead.
+EXTEND_PAD_MS = 300
+EXTEND_MAX_MS = 2000
+EXTEND_GAP_MS = 50  # keep this much clearance before the next cue
+
+
+def extended_end(cue: Cue, timing: CueTiming, next_start: int | None) -> int:
+    if not timing.aligned or timing.last_end is None:
+        return cue.end
+    needed = int(timing.last_end * 1000) + EXTEND_PAD_MS
+    if needed <= cue.end:
+        return cue.end
+    cap = cue.end + EXTEND_MAX_MS
+    if next_start is not None:
+        cap = min(cap, next_start - EXTEND_GAP_MS)
+    return max(cue.end, min(needed, cap))
+
+
+def karaoke_text(cue: Cue, timing: CueTiming, mode: str = "word",
+                 clause_size: int = 4, end: int | None = None) -> str:
     """Build the ASS text for one cue: '{\\ko..}word {\\ko..}word ... \\N ...'"""
-    duration = cue.end - cue.start
+    duration = (end if end is not None else cue.end) - cue.start
 
     # Token reveal times in ms relative to cue start, clamped into the cue
     # window and made non-decreasing. None inherits the previous token.
@@ -111,10 +132,13 @@ def build_ass(
     subs.info["ScaledBorderAndShadow"] = "yes"
     subs.styles[STYLE_NAME] = make_style(fontname, fontsize)
 
-    for cue, timing in zip(cues, timings):
-        ev = pysubs2.SSAEvent(start=cue.start, end=cue.end, style=STYLE_NAME)
+    for i, (cue, timing) in enumerate(zip(cues, timings)):
+        next_start = cues[i + 1].start if i + 1 < len(cues) else None
+        end = extended_end(cue, timing, next_start)
+        ev = pysubs2.SSAEvent(start=cue.start, end=end, style=STYLE_NAME)
         if timing.aligned:
-            ev.text = karaoke_text(cue, timing, mode=mode, clause_size=clause_size)
+            ev.text = karaoke_text(cue, timing, mode=mode,
+                                   clause_size=clause_size, end=end)
         else:
             # Never worse than the original: plain line-level cue.
             ev.text = cue.original_text.replace("\n", "\\N")

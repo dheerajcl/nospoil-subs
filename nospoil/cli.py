@@ -12,8 +12,22 @@ import time
 
 from . import __version__
 from .srtprep import load_cues
-from .align import map_words_to_cues, run_alignment, save_words, load_words
+from .align import map_words_to_cues, pick_backend, run_alignment, save_words, load_words
 from .assgen import build_ass
+
+
+def find_srt(media_path: str) -> str | None:
+    """Look for a subtitle file next to the video: same name first, then a
+    lone .srt in the same folder."""
+    stem = os.path.splitext(media_path)[0]
+    for cand in (stem + ".srt", stem + ".en.srt", stem + ".eng.srt"):
+        if os.path.isfile(cand):
+            return cand
+    folder = os.path.dirname(os.path.abspath(media_path))
+    srts = [f for f in os.listdir(folder) if f.lower().endswith(".srt")]
+    if len(srts) == 1:
+        return os.path.join(folder, srts[0])
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -24,10 +38,15 @@ def main(argv: list[str] | None = None) -> int:
         "plays without any plugins.",
     )
     p.add_argument("media", help="video or audio file (audio is decoded via ffmpeg)")
-    p.add_argument("srt", help="matching subtitle file (.srt), same language as the audio")
+    p.add_argument("srt", nargs="?",
+                   help="matching subtitle file (.srt), same language as the audio "
+                   "(default: auto-detected next to the video)")
     p.add_argument("-o", "--output", help="output .ass path (default: <srt>.nospoil.ass)")
     p.add_argument("--model", default="base",
                    help="whisper model for alignment: tiny/base/small/medium (default: base)")
+    p.add_argument("--backend", choices=["auto", "faster", "openai"], default="auto",
+                   help="alignment engine: faster-whisper (fast, low memory, great on "
+                   "CPU) or openai-whisper (default: faster if installed)")
     p.add_argument("--language", default="en", help="audio language code (default: en)")
     p.add_argument("--device", default=None, help="torch device, e.g. cpu or cuda (default: auto)")
     p.add_argument("--mode", choices=["word", "clause"], default="word",
@@ -46,6 +65,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--version", action="version", version=f"nospoil-subs {__version__}")
     args = p.parse_args(argv)
 
+    if not args.srt:
+        args.srt = find_srt(args.media)
+        if not args.srt:
+            print("error: no .srt found next to the video; pass it explicitly",
+                  file=sys.stderr)
+            return 1
+        print(f"using subtitles: {args.srt}")
+
     out_path = args.output or os.path.splitext(args.srt)[0] + ".nospoil.ass"
 
     cues, passthrough = load_cues(args.srt)
@@ -59,11 +86,13 @@ def main(argv: list[str] | None = None) -> int:
         words = load_words(args.load_align)
         print(f"loaded {len(words)} word timings from {args.load_align}")
     else:
-        print(f"aligning against audio with whisper '{args.model}' "
-              f"(this is the slow part; CPU is fine)...")
+        backend = pick_backend(args.backend)
+        print(f"aligning with {'faster-whisper' if backend == 'faster' else 'openai-whisper'} "
+              f"'{args.model}' (this is the slow part; CPU is fine)...")
         t0 = time.time()
         words = run_alignment(args.media, cues, language=args.language,
-                              model_name=args.model, device=args.device)
+                              model_name=args.model, device=args.device,
+                              backend=backend)
         print(f"aligned {len(words)} words in {time.time() - t0:.0f}s")
 
     if args.save_align:
