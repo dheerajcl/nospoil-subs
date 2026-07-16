@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nospoil-subs"
+version = "0.1.0"
+description = "Spoiler-free subtitles: words appear only as they are spoken. Plays in stock VLC."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Dheeraj" }]
+keywords = ["subtitles", "srt", "ass", "karaoke", "whisper", "forced-alignment", "vlc"]
+dependencies = [
+    "stable-ts>=2.17",
+    "pysubs2>=1.6",
+]
+
+[project.scripts]
+nospoil = "nospoil.cli:main"
+
+[tool.setuptools]
+packages = ["nospoil"]
