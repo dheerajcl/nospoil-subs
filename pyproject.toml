@@ -22,3 +22,6 @@ nospoil = "nospoil.cli:main"
 
 [tool.setuptools]
 packages = ["nospoil"]
+
+[tool.setuptools.package-data]
+nospoil = ["fonts/*"]

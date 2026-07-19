@@ -33,12 +33,23 @@ nospoil movie.mkv
 2. **Words are mapped back to their cues** by walking the aligned word
    stream and the SRT tokens together character-by-character, so it doesn't
    matter if the aligner splits or merges words differently than the SRT.
-3. **Each line is written with ASS karaoke `\ko` tags** and a fully
-   transparent secondary color. `\ko` hides a word's fill *and outline*
-   until its timestamp, so unspoken words are invisible — but they still
-   occupy their space, which is why the line never jumps. (Shadow is forced
-   to 0 in the style: libass draws shadows of unspoken `\ko` words, which
-   would ghost the spoilers back onto the screen.)
+3. **Each word carries an animated alpha transform** — invisible until its
+   reveal time, then a ~120 ms fade-in (`--transition pop` gives instant
+   karaoke-style reveals instead). Unspoken words still occupy their
+   space, which is why the line never jumps or reflows. The fade, plus a
+   small reveal lead, is what keeps word-level captions from feeling
+   strobe-y — the words melt in instead of popping.
+4. **Timing is tuned for reading, not transcription.** Every word reveals
+   `--lead` ms (default 150) before it's actually spoken; the *last* word
+   of each line gets an extra `--tail-lead` (default 250) because
+   alignment timestamps skew late at phrase boundaries; and no word may
+   appear later than `--min-show` ms (default 350) before its line leaves
+   the screen — so the tail words of rapid-fire dialogue are never lost.
+5. **The font travels inside the subtitle file.** Inter Regular (SIL Open
+   Font License) is embedded in the `.ass` as a `[Fonts]` attachment,
+   which libass loads automatically — the subtitles look identical on
+   every machine, even one with no fonts installed at all. Costs ~800 KB
+   per file; disable with `--no-embed-font`.
 
 ### Never worse than the original
 
@@ -67,20 +78,29 @@ Requirements: Python ≥ 3.9 and `ffmpeg` on your PATH. **No GPU needed.**
 ```bash
 nospoil movie.mkv                 # auto-detects the .srt next to the video
 nospoil movie.mkv subs.srt        # or name it explicitly
-nospoil movie.mkv -o out.ass --mode clause
 ```
+
+**The defaults are the recommended experience** — smooth fade-in reveals,
+early-reveal timing, embedded font. Flags exist only to opt out or tweak:
 
 | Flag | What it does |
 |---|---|
 | `--mode clause` | reveal 3–5 word chunks instead of single words (calmer on fast dialogue) |
 | `--clause-size N` | max words per reveal group in clause mode (default 4) |
+| `--transition pop` | instant reveals instead of the default 120 ms fade-in |
+| `--fade MS` | fade-in duration per word (default 120) |
+| `--lead MS` | reveal words this early, in ms (default 150) |
+| `--tail-lead MS` | extra lead for each line's last word (default 250) |
+| `--min-show MS` | minimum screen time for every word before its line vanishes (default 350) |
 | `--model small` | better alignment than the default `base` (slower) |
 | `--backend openai` | use openai-whisper instead of the default faster-whisper |
 | `--language xx` | audio language code (default `en`) |
 | `--device cuda` | use a GPU (default is CPU — see below) |
 | `--min-prob 0.5` | stricter confidence: more cues fall back to normal timing |
 | `--save-align w.json` / `--load-align w.json` | align once, regenerate styles instantly |
-| `--font`, `--font-size` | output styling |
+| `--font NAME` | override the embedded Inter with any font name (`auto` = best installed) |
+| `--no-embed-font` | skip font embedding, use the best installed font |
+| `--font-size N` | font size at 1080p (default 50) |
 
 ## Performance
 

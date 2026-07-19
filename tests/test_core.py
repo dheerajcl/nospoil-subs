@@ -98,14 +98,80 @@ def test_missing_words_falls_back():
     assert not t.aligned
 
 
-def test_karaoke_text():
+def test_karaoke_text_pop():
     cue = Cue(start=1000, end=4000, lines=[["Who's", "there?"]])
     from nospoil.align import CueTiming
     timing = CueTiming(starts=[1.5, 2.5], mean_prob=0.9, aligned=True)
-    text = karaoke_text(cue, timing)
+    text = karaoke_text(cue, timing, transition="pop", lead_ms=0, min_show_ms=0,
+                        tail_lead_ms=0)
     # 500ms lead gap = 50cs, first word lasts 100cs until second reveals,
     # last word runs to the cue end (300cs total - 150cs reveal)
     assert text == "{\\ko50}{\\ko100}Who's {\\ko150}there?"
+
+
+def test_karaoke_text_fade():
+    cue = Cue(start=1000, end=4000, lines=[["Who's", "there?"]])
+    from nospoil.align import CueTiming
+    timing = CueTiming(starts=[1.5, 2.5], mean_prob=0.9, aligned=True)
+    text = karaoke_text(cue, timing, transition="fade", fade_ms=120,
+                        lead_ms=0, min_show_ms=0, tail_lead_ms=0)
+    # each word fades in over 120ms starting at its reveal time
+    assert text == ("{\\alpha&HFF&\\t(500,620,\\alpha&H00&)}Who's "
+                    "{\\alpha&HFF&\\t(1500,1620,\\alpha&H00&)}there?")
+
+
+def test_lead_and_min_show():
+    from nospoil.align import CueTiming
+    from nospoil.assgen import reveal_times
+    cue = Cue(start=0, end=2000, lines=[["a", "b", "c"]])
+    # b at 1.0s pulled 150ms earlier; c at 1.9s would get only 100ms of
+    # screen time, so it's capped at duration - 350 = 1650ms
+    timing = CueTiming(starts=[0.2, 1.0, 1.9], mean_prob=0.9, aligned=True)
+    assert reveal_times(cue, timing, 2000, "word", 4,
+                        lead_ms=150, min_show_ms=350,
+                        tail_lead_ms=0) == [50, 850, 1650]
+
+
+def test_tail_lead():
+    from nospoil.align import CueTiming
+    from nospoil.assgen import reveal_times
+    cue = Cue(start=0, end=3000, lines=[["a", "b", "c"]])
+    timing = CueTiming(starts=[0.2, 1.0, 2.0], mean_prob=0.9, aligned=True)
+    # last word pulled 250ms earlier than the (often-late) aligned time
+    assert reveal_times(cue, timing, 3000, "word", 4,
+                        lead_ms=0, min_show_ms=0,
+                        tail_lead_ms=250) == [200, 1000, 1750]
+    # but never before the preceding word's reveal
+    timing2 = CueTiming(starts=[0.2, 1.0, 1.1], mean_prob=0.9, aligned=True)
+    assert reveal_times(cue, timing2, 3000, "word", 4,
+                        lead_ms=0, min_show_ms=0,
+                        tail_lead_ms=250) == [200, 1000, 1000]
+
+
+def test_ass_uuencode():
+    from nospoil.fontembed import ass_uuencode
+    # 6 bits + 33 per char: zero bytes encode to '!' (chr 33)
+    assert ass_uuencode(b"\x00\x00\x00") == ["!!!!"]
+    assert ass_uuencode(b"\x00") == ["!!"]
+    assert ass_uuencode(b"\xff\xff\xff") == ["````"]  # 63+33 = 96 = '`'
+    # decode round-trip (libass algorithm: groups of 4 chars -> 3 bytes,
+    # partial group of n chars -> n-1 bytes)
+    import os
+    data = os.urandom(1000)
+    lines = ass_uuencode(data)
+    stream = "".join(lines)
+    out = bytearray()
+    for i in range(0, len(stream), 4):
+        grp = [ord(c) - 33 for c in stream[i:i + 4]]
+        v = 0
+        for g in grp:
+            v = (v << 6) | g
+        v <<= 6 * (4 - len(grp))
+        chunk = bytes(((v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF))
+        out.extend(chunk[: len(grp) - 1])
+    assert bytes(out) == data
+    # lines stay within the 80-char spec limit
+    assert all(len(ln) <= 80 for ln in lines)
 
 
 def test_karaoke_clause_mode():
@@ -114,7 +180,9 @@ def test_karaoke_clause_mode():
     from nospoil.align import CueTiming
     timing = CueTiming(starts=[0.1, 0.4, 0.7, 1.0, 2.0, 2.4],
                        mean_prob=0.9, aligned=True)
-    text = karaoke_text(cue, timing, mode="clause", clause_size=4)
+    text = karaoke_text(cue, timing, mode="clause", clause_size=4,
+                        transition="pop", lead_ms=0, min_show_ms=0,
+                        tail_lead_ms=0)
     # first clause ends at "butler," (punctuation) -> all 4 reveal at 10cs,
     # second clause reveals at 200cs
     assert text == ("{\\ko10}{\\ko0}I {\\ko0}killed {\\ko0}the "
@@ -161,9 +229,14 @@ def test_build_ass_end_to_end():
         subs.save(out)
         with open(out, encoding="utf-8") as f:
             content = f.read()
-    assert "\\ko" in content
-    # transparent secondary colour is the core of the invisibility trick
+    # default transition: per-word alpha fade-in transforms
+    assert "\\alpha&HFF&\\t(" in content
+    # transparent secondary colour (used by the pop transition) in the style
     assert "&HFF000000" in content
+    # bundled font embedded in a [Fonts] section, style points at it
+    assert "[Fonts]" in content
+    assert "fontname: Inter-Regular_0.otf" in content
+    assert "Inter" in content.split("[Events]")[0]
     # passthrough sound-effect cue survives untouched
     assert "dramatic music" in content
     # line break preserved inside the karaoke cue

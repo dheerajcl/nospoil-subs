@@ -53,11 +53,28 @@ def main(argv: list[str] | None = None) -> int:
                    help="reveal word-by-word, or in small clauses (less strobe-y on fast dialogue)")
     p.add_argument("--clause-size", type=int, default=4,
                    help="max words per reveal group in clause mode (default: 4)")
+    p.add_argument("--transition", choices=["fade", "pop"], default="fade",
+                   help="words fade in smoothly (default) or appear instantly")
+    p.add_argument("--fade", type=int, default=120, metavar="MS",
+                   help="fade-in duration per word in ms (default: 120)")
+    p.add_argument("--lead", type=int, default=150, metavar="MS",
+                   help="reveal words this many ms before they're spoken (default: 150)")
+    p.add_argument("--tail-lead", type=int, default=250, metavar="MS",
+                   help="extra lead for the last word of each line, where "
+                   "alignment tends to lag (default: 250)")
+    p.add_argument("--min-show", type=int, default=350, metavar="MS",
+                   help="every word gets at least this much screen time before "
+                   "its line disappears (default: 350)")
     p.add_argument("--min-prob", type=float, default=0.35,
                    help="below this mean alignment confidence a cue falls back to "
                    "normal line-level timing (default: 0.35)")
-    p.add_argument("--font", default="Arial", help="subtitle font (default: Arial)")
-    p.add_argument("--font-size", type=float, default=60.0, help="font size at 1080p (default: 60)")
+    p.add_argument("--font", default="embedded",
+                   help="subtitle font (default: Inter, embedded inside the .ass "
+                   "so it looks the same on every machine; or 'auto' to pick "
+                   "an installed font, or any font name)")
+    p.add_argument("--no-embed-font", action="store_true",
+                   help="don't embed the bundled font; use the best installed one")
+    p.add_argument("--font-size", type=float, default=50.0, help="font size at 1080p (default: 50)")
     p.add_argument("--save-align", metavar="JSON",
                    help="save word timings to JSON (re-style later without re-aligning)")
     p.add_argument("--load-align", metavar="JSON",
@@ -105,9 +122,15 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{fallbacks}/{len(timings)} cues had unreliable alignment and "
               f"keep normal line-level timing")
 
+    fontname = args.font
+    if args.no_embed_font and fontname == "embedded":
+        fontname = "auto"
     subs = build_ass(cues, timings, passthrough, mode=args.mode,
                      clause_size=args.clause_size,
-                     fontname=args.font, fontsize=args.font_size)
+                     fontname=fontname, fontsize=args.font_size,
+                     transition=args.transition, fade_ms=args.fade,
+                     lead_ms=args.lead, min_show_ms=args.min_show,
+                     tail_lead_ms=args.tail_lead)
     subs.save(out_path)
     print(f"wrote {out_path}")
     print("open your video in VLC and load this file "
